@@ -1,97 +1,144 @@
-#include <iostream>
-#include <cstring>
+#include "action.hpp"
+#include "common.hpp"
+
 #include <unistd.h>
-#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <cstring>
 
-int client_socket;
-const int PORT = 12364;
-const int BUFFER_SIZE = 1024;
-
-void connect_to_server() 
+void write_server_int(int sockfd, int msg)
 {
-    client_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (client_socket == -1) {
-        std::cerr << "Error creating server socket\n";
-        return EXIT_FAILURE;
-    }
-
-    sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(PORT);
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-    if (connect(client_socket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
-        std::cerr << "Error connect to server" << std::endl;
-        return EXIT_FAILURE;
+    int n = write(sockfd, &msg, sizeof(int));
+    if (n < 0) {
+        std::cout << "ERROR writing int to server socket" << std::endl;
+        exit(0);
     }
 }
 
-void receive_message(char* buffer, size_t bufferSize) 
+
+int connect_to_server(char * hostname, int portno)
 {
-    int valread = read(client_socket, buffer, bufferSize);
-    if (valread == -1) {
-        std::cerr << "Error reading from server" << std::endl;
-        close(client_socket);
-        return EXIT_FAILURE;
+    struct sockaddr_in serv_addr;
+    struct hostent *server;
+ 
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	
+    if (sockfd < 0) 
+        std::cout << "ERROR opening socket for server." << std::endl;
+	
+    server = gethostbyname(hostname);
+	
+    if (server == nullptr) {
+        std::cout << "ERROR, no such host " << hostname << std::endl; 
+        exit(0);
     }
+	
+	memset(&serv_addr, 0, sizeof(serv_addr));
+
+    serv_addr.sin_family = AF_INET;
+    memmove(server->h_addr, &serv_addr.sin_addr.s_addr, server->h_length);
+    serv_addr.sin_port = htons(portno); 
+
+   if (connect(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+        std::cout << "ERROR connecting to server" << std::endl;
+   }
+
+    return sockfd;
 }
 
-void send_message(const std::string& message) 
+void take_turn(int sockfd)
 {
-    send(client_socket, message.c_str(), message.size(), 0);
-}
-
-void display_board() 
-{
-    char buffer[BUFFER_SIZE] = {0};
-    receive_message(buffer, sizeof(buffer));
-    std::cout << buffer;
-}
-
-void play_game() 
-{
-    while (true) {
-        display_board();
-
-        std::cout << "Enter your move (1-9): ";
-        int move;
-        std::cin >> move;
-
-        // Convert the move to a string
-        std::string move_str = std::to_string(move);
-
-        // Send the move to the server
-        send_message(move_str);
-
-        // Receive and print the updated board from the server
-        receive_message(buffer, sizeof(buffer));
-        std::cout << buffer;
-
-        // Check if the game is over
-        if (strstr(buffer, "Result") != nullptr) {
+    char buffer[10];
+    while (1) { 
+        std::cout << "Enter 0-8 to make a move, or 9 for number of active players: " << std::endl;
+	    fgets(buffer, 10, stdin);
+	    int move = buffer[0] - '0';
+        if (move <= 9 && move >= 0){
+            std::cout << std::endl;
+            write_server_int(sockfd, move);   
             break;
+        } else {
+            std::cout << "\nInvalid input. Try again.\n" << std::endl;
         }
     }
 }
 
-int main() 
+void update_board(int sockfd, char board[][3])
 {
-    connect_to_server();
+    int player_id = recv_int(sockfd);
+    int move = recv_int(sockfd);
+    board[move/3][move%3] = player_id ? 'X' : 'O';    
+    draw_board(board);
+}
 
-    char buffer[BUFFER_SIZE];
 
-    // Receive and print the initial board
-    receive_message(buffer, sizeof(buffer));
-    std::cout << buffer;
+int main(int argc, char *argv[])
+{
+    if (argc < 3) {
+       std::cout << "usage " << argv[0] << " hostname port\n";
+       exit(0);
+    }
 
-    // Receive and print the player message
-    receive_message(buffer, sizeof(buffer));
-    std::cout << buffer;
+    int sockfd = connect_to_server(argv[1], atoi(argv[2]));
+    int id = recv_int(sockfd);
+    char board[3][3] = { {' ', ' ', ' '}, 
+                         {' ', ' ', ' '}, 
+                         {' ', ' ', ' '} };
 
-    // Play the game
-    play_game();
+    printf("Tic-Tac-Toe\n------------\n");
 
-    close(client_socket);
+    action act = action::HOLD;
+    do {
+        act = read_action(sockfd);
+        if (act == action::HOLD) {
+            printf("Waiting for a second player...\n");
+        }
+    } while ( act == action::START );
 
+    /* The game has begun. */
+    printf("Game on!\n");
+    printf("Your are %c's\n", id ? 'X' : 'O');
+
+    draw_board(board);
+
+    while(true) {
+        act = read_action(sockfd);
+        switch(act) {
+        case action::TURN: {
+	        std::cout << "Your move...\n" << std::endl;
+	        take_turn(sockfd);
+            break;
+        } case action::INVALID: {
+            std::cout << "That position has already been played. Try again.\n" << std::endl;
+            break;
+        } case action::COUNT: {
+            int num_players = recv_int(sockfd);
+            std::cout << "There are currently " <<  num_players << " active players." << std::endl;
+            break;
+        } case action::UPDATE: {
+            update_board(sockfd, board);
+            break;
+        } case action::WAIT: {
+            std::cout << "Waiting for other players move..." << std::endl;
+            break;
+        } case action::WIN: {
+            std::cout << "You win!" << std::endl;
+            return 0;
+        } case action::LOSE: {
+            std::cout << "You lost." << std::endl;
+            return 0;
+        } case action::DRAW: {
+            std::cout << "Draw." << std::endl;
+            return 0;
+        } default:
+            std::cout << "Unknown message." << std::endl;
+            break;
+        }
+    }
+    
+    std::cout << "Game over." << std::endl;
+    close(sockfd);
     return 0;
 }
