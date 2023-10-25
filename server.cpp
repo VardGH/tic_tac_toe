@@ -160,6 +160,7 @@ void *run_game(void *thread_data)
     
     send_clients_message(cli_sockfd, action::START);
 
+    // clear_screen();
     draw_board(board);
     
     int prev_player_turn = 1;

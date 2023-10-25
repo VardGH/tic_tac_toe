@@ -17,7 +17,6 @@ void write_server_int(int sockfd, int msg)
     }
 }
 
-
 int connect_to_server(char * hostname, int portno)
 {
     struct sockaddr_in serv_addr;
@@ -25,9 +24,10 @@ int connect_to_server(char * hostname, int portno)
  
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	
-    if (sockfd < 0) 
+    if (sockfd < 0) {
         std::cout << "ERROR opening socket for server." << std::endl;
-	
+    }
+    
     server = gethostbyname(hostname);
 	
     if (server == nullptr) {
@@ -52,7 +52,7 @@ void take_turn(int sockfd)
 {
     char buffer[10];
     while (1) { 
-        std::cout << "Enter 0-8 to make a move, or 9 for number of active players: " << std::endl;
+        std::cout << "Enter 0-8 to make a move, or 9 for number of active players: ";
 	    fgets(buffer, 10, stdin);
 	    int move = buffer[0] - '0';
         if (move <= 9 && move >= 0){
@@ -65,14 +65,19 @@ void take_turn(int sockfd)
     }
 }
 
+void clear_screen()
+{
+    system("clear");
+}
+
 void update_board(int sockfd, char board[][3])
 {
     int player_id = recv_int(sockfd);
     int move = recv_int(sockfd);
-    board[move/3][move%3] = player_id ? 'X' : 'O';    
+    board[move/3][move%3] = player_id ? 'X' : 'O';
+    clear_screen();    
     draw_board(board);
 }
-
 
 int main(int argc, char *argv[])
 {
@@ -100,6 +105,7 @@ int main(int argc, char *argv[])
     /* The game has begun. */
     printf("Game on!\n");
     printf("Your are %c's\n", id ? 'X' : 'O');
+
 
     draw_board(board);
 
